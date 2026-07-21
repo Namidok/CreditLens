@@ -16,44 +16,45 @@ Built by [Srikar Kodi](https://srikarkodi.dev) · [LinkedIn](https://linkedin.co
 
 ## Architecture
 
-raw_reports/ (deliberately messy inputs)
-├── valuations_batch1.csv ← schema A, German dates, comma decimals
-├── valuations_batch2.csv ← schema B, text periods, "n/a", duplicates
-├── GP_Report_AtlanticMezz.pdf ← structured GP report (tables + covenant)
-└── GP_Report_AlpineSenior.pdf ← prose-style GP report (different layout)
-│
-▼
-ingest.py — ETL + VALIDATION GATE
-• schema normalization (2 formats → 1 canonical model)
-• date parsing (ISO, dd.mm.yyyy, "Q3 2025")
-• type coercion (comma decimals, "n/a" strings)
-• range checks (catches unit errors, e.g. yield 0.118 vs 11.8)
-• deduplication
-→ clean rows → portfolio.db (SQLite)
-→ bad rows → rejected_rows.log (with reasons)
-│
-▼
-portfolio.db (SQLite)
-• funds (dimension) + valuations (fact)
-• v_latest — latest NAV per fund (ROW_NUMBER window function)
-• v_qoq — quarter-over-quarter deltas (LAG window function)
-│
-▼
-app.py — STREAMLIT DASHBOARD
-• Tab 1: KPIs, trends, strategy/geo/vintage filters,
-auto-watchlist (leverage ↑ + coverage ↓ = 🔴 flag)
-• Tab 2: Data Quality — every rejected row, with its reason
-• Tab 3: Ask the Documents — RAG Q&A over GP report PDFs (in progress)
+```mermaid
+flowchart TD
+    subgraph RAW["📁 raw_reports — deliberately messy inputs"]
+        A1["valuations_batch1.csv<br/><i>schema A · German dates · comma decimals</i>"]
+        A2["valuations_batch2.csv<br/><i>schema B · text periods · n/a · duplicates</i>"]
+        A3["GP_Report_AtlanticMezz.pdf<br/><i>structured report · covenant clause</i>"]
+        A4["GP_Report_AlpineSenior.pdf<br/><i>prose-style report · different layout</i>"]
+    end
 
+    subgraph ETL["⚙️ ingest.py — ETL + Validation Gate"]
+        B1["Schema normalization<br/>2 formats → 1 canonical model"]
+        B2["Date parsing<br/>ISO · dd.mm.yyyy · 'Q3 2025'"]
+        B3["Type coercion<br/>comma decimals · 'n/a' strings"]
+        B4["Range checks<br/>catches unit errors (0.118 vs 11.8)"]
+        B5["Deduplication"]
+    end
 
-## Run it locally
+    subgraph DB["🗄️ portfolio.db — SQLite"]
+        C1["funds <i>(dimension)</i>"]
+        C2["valuations <i>(fact)</i>"]
+        C3["v_latest — ROW_NUMBER()<br/>v_qoq — LAG()"]
+    end
 
-```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-python generate_data.py    # create synthetic messy inputs
-python ingest.py           # ETL + validation → portfolio.db
-streamlit run app.py       # dashboard at localhost:8501
+    LOG["📋 rejected_rows.log<br/><i>every bad row, with its reason</i>"]
+
+    subgraph APP["📊 app.py — Streamlit Dashboard"]
+        D1["Tab 1 · Portfolio Dashboard<br/>KPIs · trends · filters ·<br/>🔴 auto-watchlist: leverage ↑ + coverage ↓"]
+        D2["Tab 2 · Data Quality<br/>rejected rows rendered visibly"]
+        D3["Tab 3 · Ask the Documents<br/>RAG Q&A over GP PDFs <i>(in progress)</i>"]
+    end
+
+    A1 --> ETL
+    A2 --> ETL
+    ETL -->|clean rows| DB
+    ETL -->|bad rows| LOG
+    DB --> D1
+    LOG --> D2
+    A3 -.->|chunk + embed| D3
+    A4 -.->|chunk + embed| D3
 ```
 
 ## Design decisions (and honest limitations)
