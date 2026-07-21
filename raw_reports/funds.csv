@@ -1,0 +1,9 @@
+fund_id,fund_name,strategy,geography,vintage_year,commitment_eur_m
+F001,Alpine Senior Credit I,Senior,Europe,2021,100
+F002,Nordic Direct Lending II,Senior,Europe,2022,150
+F003,Atlantic Mezzanine Partners,Subordinated,North America,2021,80
+F004,Iberia Opportunistic Credit,Opportunistic,Europe,2023,60
+F005,US Mid-Market Senior III,Senior,North America,2022,120
+F006,RE Debt Fund Europe I,Senior,Europe,2023,90
+F007,Infra Debt Partners II,Subordinated,Global,2021,110
+F008,Energy Transition Credit I,Opportunistic,Europe,2024,70
