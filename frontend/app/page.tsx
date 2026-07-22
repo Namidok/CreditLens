@@ -8,7 +8,6 @@ import {
 const API = "http://localhost:8000";
 const TEAL = "#00C2A8";
 
-// ---------- helpers ----------
 const card = "rounded-2xl border border-[#202A3D] bg-gradient-to-br from-[#151C2C] to-[#10151F] shadow-lg";
 async function jget(path: string) { const r = await fetch(`${API}${path}`); return r.json(); }
 
@@ -19,7 +18,7 @@ function useFilters() {
   const qs = useMemo(() =>
     `?strategies=${sel.strategies.join(",")}&geographies=${sel.geographies.join(",")}&vintages=${sel.vintages.join(",")}`,
     [sel]);
-  return { meta, sel, setSel, qs };
+  return { meta, setMeta, sel, setSel, qs };
 }
 
 function Pill({ active, label, onClick }: any) {
@@ -33,12 +32,11 @@ function Pill({ active, label, onClick }: any) {
   );
 }
 
-// ---------- KPI ----------
 function Kpi({ label, value, suffix = "", delay = 0 }: any) {
   return (
     <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.45 }}
-      whileHover={{ y: -3, borderColor: "#00C2A866" }}
+      whileHover={{ y: -3 }}
       className={`${card} p-5 border-t-2 border-t-[#00C2A833]`}>
       <div className="text-[11px] uppercase tracking-widest text-[#7C8799] font-semibold">{label}</div>
       <div className="mt-2 text-3xl font-bold font-mono" style={{ color: TEAL }}>{value}{suffix}</div>
@@ -46,9 +44,8 @@ function Kpi({ label, value, suffix = "", delay = 0 }: any) {
   );
 }
 
-// ---------- main ----------
 export default function Home() {
-  const { meta, sel, setSel, qs } = useFilters();
+  const { meta, setMeta, sel, setSel, qs } = useFilters();
   const [kpis, setKpis] = useState<any>(null);
   const [watch, setWatch] = useState<any[]>([]);
   const [ts, setTs] = useState<any>(null);
@@ -57,30 +54,56 @@ export default function Home() {
   const [tab, setTab] = useState<"dash" | "quality" | "ask">("dash");
   const [deep, setDeep] = useState("F003");
 
-  // upload state
+  // upload + commit state
   const [receipt, setReceipt] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [commitResult, setCommitResult] = useState<any>(null);
+  const [onboarding, setOnboarding] = useState<any>({});
 
   // ask state
   const [q, setQ] = useState("");
   const [chat, setChat] = useState<any[]>([]);
   const [asking, setAsking] = useState(false);
 
-  useEffect(() => {
-    if (!meta) return;
+  function refetchAll() {
     jget(`/api/kpis${qs}`).then(setKpis);
     jget(`/api/watchlist${qs}`).then(setWatch);
     jget(`/api/timeseries${qs}`).then(setTs);
     jget(`/api/funds${qs}`).then(setFunds);
     jget(`/api/rejected`).then(setRejected);
-  }, [meta, qs]);
+  }
+
+  useEffect(() => { if (meta) refetchAll(); }, [meta, qs]);
 
   async function doUpload(file: File) {
     setUploading(true);
     const fd = new FormData(); fd.append("file", file);
     const res = await fetch(`${API}/api/upload`, { method: "POST", body: fd });
     setReceipt(await res.json());
+    setCommitResult(null);
+    setOnboarding({});
     setUploading(false);
+  }
+
+  async function doCommit() {
+    setCommitting(true);
+    const res = await fetch(`${API}/api/commit`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: receipt.filename,
+        rows: receipt.clean_rows,
+        fund_meta: Object.keys(onboarding).length ? onboarding : null,
+      }),
+    });
+    const data = await res.json();
+    setCommitResult(data);
+    setCommitting(false);
+    if (data.ok) {
+      const m = await jget("/api/meta");
+      setMeta(m);
+      setSel({ strategies: m.strategies, geographies: m.geographies, vintages: m.vintages });
+    }
   }
 
   async function doAsk() {
@@ -96,10 +119,12 @@ export default function Home() {
     setAsking(false);
   }
 
+  function closeReceipt() { setReceipt(null); setCommitResult(null); setOnboarding({}); }
+
   const toggle = (key: "strategies" | "geographies" | "vintages", v: any) =>
     setSel((s: any) => ({ ...s, [key]: s[key].includes(v) ? s[key].filter((x: any) => x !== v) : [...s[key], v] }));
 
-  const deepData = ts?.funds?.[deep] ?? [];
+  const deepData = ts?.funds?.[deep] ?? ts?.funds?.[Object.keys(ts?.funds ?? {})[0]] ?? [];
 
   return (
     <main className="max-w-7xl mx-auto px-6 py-10">
@@ -128,12 +153,12 @@ export default function Home() {
         <label className={`ml-auto cursor-pointer px-4 py-2 rounded-lg text-sm font-semibold border border-[#00C2A8] text-[#00C2A8] hover:bg-[#00C2A81a] transition ${uploading ? "opacity-50 pointer-events-none" : ""}`}>
           {uploading ? "Processing…" : "📤 Drop a GP report (PDF / CSV)"}
           <input type="file" accept=".pdf,.csv,.xlsx" className="hidden"
-            onChange={(e) => e.target.files?.[0] && doUpload(e.target.files[0])} />
+            onChange={(e) => { if (e.target.files?.[0]) { doUpload(e.target.files[0]); e.target.value = ""; } }} />
         </label>
       </div>
 
       {/* FILTERS */}
-      {meta && (
+      {meta && (meta.strategies.length > 0) && (
         <div className={`${card} mt-6 p-4 flex flex-wrap gap-x-8 gap-y-3`}>
           {[["Strategy", "strategies", meta.strategies], ["Geography", "geographies", meta.geographies], ["Vintage", "vintages", meta.vintages]].map(([label, key, opts]: any) => (
             <div key={key} className="flex items-center gap-2 flex-wrap">
@@ -233,7 +258,7 @@ export default function Home() {
                       <td className="px-4 py-2">{f.leverage}</td>
                       <td className="px-4 py-2">{f.coverage}</td>
                       <td className="px-4 py-2">{f.default_rate_pct}</td>
-                      <td className={`px-4 py-2 ${f.covenant_headroom !== "" && f.covenant_headroom <= 0.3 ? "text-red-400 font-semibold" : "text-[#7C8799]"}`}>
+                      <td className={`px-4 py-2 ${f.covenant_limit !== "" && f.covenant_headroom <= 0.3 ? "text-red-400 font-semibold" : "text-[#7C8799]"}`}>
                         {f.covenant_limit !== "" ? `${f.covenant_headroom}x to ${f.covenant_limit}x limit` : "—"}
                       </td>
                     </tr>
@@ -241,6 +266,19 @@ export default function Home() {
                 </tbody>
               </table>
             </div>
+          </motion.div>
+        )}
+
+        {/* ============ EMPTY STATE ============ */}
+        {tab === "dash" && kpis?.empty && (
+          <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            className={`${card} mt-8 p-10 text-center`}>
+            <p className="text-3xl">📭</p>
+            <p className="mt-3 font-semibold">The portfolio is empty.</p>
+            <p className="mt-1 text-sm text-[#7C8799]">
+              Upload a GP report (PDF) or data extract (CSV) — CreditLens will validate it,
+              and you can commit approved rows to build the portfolio.
+            </p>
           </motion.div>
         )}
 
@@ -262,6 +300,9 @@ export default function Home() {
                   </tr>
                 </thead>
                 <tbody>
+                  {rejected.length === 0 && (
+                    <tr><td colSpan={4} className="px-4 py-6 text-center text-[#7C8799]">No rejected rows — all inputs passed validation. ✅</td></tr>
+                  )}
                   {rejected.map((r, i) => (
                     <tr key={i} className="border-b border-[#161d2b]">
                       <td className="px-4 py-2 text-[#7C8799]">{r.source_file}</td>
@@ -286,10 +327,13 @@ export default function Home() {
               Try: <i>What is Atlantic Mezzanine's leverage covenant?</i>
             </p>
             <div className={`${card} mt-4 p-4 min-h-[280px] space-y-4`}>
+              {chat.length === 0 && !asking && (
+                <p className="text-sm text-[#4d5a70] text-center pt-16">No questions yet — ask anything about the indexed GP reports.</p>
+              )}
               {chat.map((m, i) => (
                 <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                   className={m.role === "user" ? "text-right" : ""}>
-                  <div className={`inline-block max-w-[85%] rounded-2xl px-4 py-3 text-sm ${
+                  <div className={`inline-block max-w-[85%] text-left rounded-2xl px-4 py-3 text-sm ${
                     m.role === "user" ? "bg-[#00C2A81a] border border-[#00C2A855]" : "bg-[#131926] border border-[#202A3D]"}`}>
                     <p className="whitespace-pre-wrap">{m.text}</p>
                     {m.sources?.length > 0 && (
@@ -323,22 +367,58 @@ export default function Home() {
         {receipt && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
-            onClick={() => setReceipt(null)}>
+            onClick={closeReceipt}>
             <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className={`${card} p-6 w-[420px] max-h-[80vh] overflow-auto`}>
+              className={`${card} p-6 w-[440px] max-h-[85vh] overflow-auto`}>
               <h3 className="text-lg font-bold">📋 Processing receipt</h3>
               <p className="text-xs text-[#7C8799] mt-1">{receipt.filename}</p>
+
               {receipt.error && <p className="mt-4 text-red-400 text-sm">{receipt.error}</p>}
+
               {receipt.type === "csv" && !receipt.error && (
                 <div className="mt-4 space-y-2 text-sm">
-                  <p>✅ <b>{receipt.clean_rows.length}</b> rows validated → <i>Portfolio</i></p>
+                  <p>✅ <b>{receipt.clean_rows.length}</b> rows validated</p>
                   <p>🔴 <b>{receipt.rejected_rows.length}</b> rows rejected → <i>Data Quality</i></p>
                   {receipt.rejected_rows.slice(0, 5).map((r: any, i: number) => (
                     <p key={i} className="text-xs text-red-300 border-l-2 border-red-500 pl-2">{r.reason}</p>
                   ))}
+
+                  {!commitResult?.ok && !commitResult?.needs_onboarding && (
+                    <button onClick={doCommit} disabled={committing || receipt.clean_rows.length === 0}
+                      className="mt-3 w-full py-2 rounded-xl border border-[#00C2A8] text-[#00C2A8] font-bold hover:bg-[#00C2A81a] transition disabled:opacity-50">
+                      {committing ? "Committing…" : `✅ Commit ${receipt.clean_rows.length} rows to portfolio`}
+                    </button>
+                  )}
+
+                  {commitResult?.needs_onboarding && (
+                    <div className="mt-3 space-y-2 text-xs">
+                      <p className="text-amber-400">⚠️ New funds — onboard them first (master data):</p>
+                      {commitResult.needs_onboarding.map((fid: string) => (
+                        <div key={fid} className="border border-[#202A3D] rounded-lg p-2 space-y-1">
+                          <p className="font-mono text-[#00C2A8]">{fid}</p>
+                          {[["fund_name", "Fund name"], ["strategy", "Strategy (Senior/Subordinated/Opportunistic)"], ["geography", "Geography"], ["vintage_year", "Vintage year"]].map(([field, ph]) => (
+                            <input key={field} placeholder={ph}
+                              className="w-full bg-[#0B0F17] border border-[#202A3D] rounded px-2 py-1"
+                              onChange={(e) => setOnboarding((o: any) => ({ ...o, [fid]: { ...o[fid], [field]: e.target.value } }))} />
+                          ))}
+                        </div>
+                      ))}
+                      <button onClick={doCommit} disabled={committing}
+                        className="w-full py-2 rounded-xl bg-[#00C2A8] text-[#06231f] font-bold disabled:opacity-50">
+                        {committing ? "Committing…" : "Onboard + Commit"}
+                      </button>
+                    </div>
+                  )}
+
+                  {commitResult?.ok && (
+                    <p className="mt-3 text-sm text-emerald-400">
+                      ✅ {commitResult.committed} rows committed{commitResult.onboarded?.length ? ` · onboarded: ${commitResult.onboarded.join(", ")}` : ""} — dashboard updated.
+                    </p>
+                  )}
                 </div>
               )}
+
               {receipt.type === "pdf" && (
                 <div className="mt-4 space-y-2 text-sm">
                   <p>📊 <b>{Object.keys(receipt.extracted).length}</b> metrics extracted</p>
@@ -346,8 +426,9 @@ export default function Home() {
                   <p>🤖 <b>{receipt.chunks_indexed}</b> chunks indexed → <i>Ask the Documents</i></p>
                 </div>
               )}
-              <button onClick={() => setReceipt(null)}
-                className="mt-5 w-full py-2 rounded-xl bg-[#00C2A8] text-[#06231f] font-bold hover:brightness-110 transition">Done</button>
+
+              <button onClick={closeReceipt}
+                className="mt-5 w-full py-2 rounded-xl bg-[#1A2233] border border-[#202A3D] font-bold hover:bg-[#202A3D] transition">Done</button>
             </motion.div>
           </motion.div>
         )}
