@@ -2,6 +2,7 @@
 CreditLens — Ingestion & Validation Pipeline
 Reads 2 differently-formatted CSV batches, normalizes to one canonical schema,
 runs a validation gate, loads clean rows to SQLite, logs rejected rows with reasons.
+Also exposes validate_dataframe() for live uploads from the dashboard.
 """
 import re
 import sqlite3
@@ -25,21 +26,24 @@ RANGES = {
 
 rejected = []
 
+
 def reject(row_dict, source, reason):
     rejected.append({"source_file": source, "reason": reason, **row_dict})
+
 
 def to_float(val):
     """Handle comma decimals, strings, blanks. Returns float or None."""
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return None
     s = str(val).strip()
-    if s == "" or s.lower() in ("n/a", "na", "none", "-"):
+    if s == "" or s.lower() in ("n/a", "na", "none", "-", "nan"):
         return None
     s = s.replace(",", ".")            # German decimal comma → dot
     try:
         return float(s)
     except ValueError:
         return None
+
 
 def parse_date(val):
     """Handle ISO, German dd.mm.yyyy, and 'Q3 2025' text. Returns ISO date str or None."""
@@ -55,6 +59,7 @@ def parse_date(val):
         except ValueError:
             continue
     return None
+
 
 def validate_and_collect(df, source):
     """Run every row through the validation gate. Returns list of clean rows."""
@@ -84,63 +89,83 @@ def validate_and_collect(df, source):
                       vals["leverage"], vals["coverage"], vals["default_rate_pct"]])
     return clean
 
-# ---------- BATCH 1: schema A ----------
-df1 = pd.read_csv(f"{RAW}/valuations_batch1.csv", dtype=object)
-df1 = df1.rename(columns={"net_debt_ebitda": "leverage",
-                          "interest_coverage": "coverage"})
-clean1 = validate_and_collect(df1, "valuations_batch1.csv")
 
-# ---------- BATCH 2: schema B → map to canonical ----------
-df2 = pd.read_csv(f"{RAW}/valuations_batch2.csv", dtype=object)
-df2 = df2.rename(columns={
-    "FundID": "fund_id", "Period": "reporting_date", "NAV (EUR m)": "nav_eur_m",
-    "Gross Yield %": "yield_pct", "Leverage Multiple": "leverage",
-    "ICR": "coverage", "Defaults %": "default_rate_pct",
-})
-# Dedup BEFORE validation (log what we drop)
-dupes = df2[df2.duplicated()]
-for _, row in dupes.iterrows():
-    reject(row.to_dict(), "valuations_batch2.csv", "exact duplicate row — dropped")
-df2 = df2.drop_duplicates()
-clean2 = validate_and_collect(df2, "valuations_batch2.csv")
+def validate_dataframe(df, source_name):
+    """Reusable validation entry point for uploaded files.
+    Returns (clean_df, rejected_df)."""
+    global rejected
+    rejected = []
+    clean = validate_and_collect(df, source_name)
+    clean_df = pd.DataFrame(clean, columns=CANONICAL)
+    rejected_df = pd.DataFrame(rejected) if rejected else pd.DataFrame()
+    return clean_df, rejected_df
 
-# ---------- LOAD TO SQLITE ----------
-clean_df = pd.DataFrame(clean1 + clean2, columns=CANONICAL)
-funds_df = pd.read_csv(f"{RAW}/funds.csv")
 
-con = sqlite3.connect(DB)
-funds_df.to_sql("funds", con, if_exists="replace", index=False)
-clean_df.to_sql("valuations", con, if_exists="replace", index=False)
+def main():
+    global rejected
+    rejected = []
 
-# Window-function views (the SQL showpiece)
-con.executescript("""
-DROP VIEW IF EXISTS v_latest;
-CREATE VIEW v_latest AS
-SELECT * FROM (
-    SELECT v.*,
-           ROW_NUMBER() OVER (PARTITION BY fund_id ORDER BY reporting_date DESC) AS rn
-    FROM valuations v
-) WHERE rn = 1;
+    # ---------- BATCH 1: schema A ----------
+    df1 = pd.read_csv(f"{RAW}/valuations_batch1.csv", dtype=object)
+    df1 = df1.rename(columns={"net_debt_ebitda": "leverage",
+                              "interest_coverage": "coverage"})
+    clean1 = validate_and_collect(df1, "valuations_batch1.csv")
 
-DROP VIEW IF EXISTS v_qoq;
-CREATE VIEW v_qoq AS
-SELECT fund_id, reporting_date,
-       nav_eur_m,
-       nav_eur_m - LAG(nav_eur_m)  OVER (PARTITION BY fund_id ORDER BY reporting_date) AS nav_change,
-       leverage,
-       leverage - LAG(leverage)    OVER (PARTITION BY fund_id ORDER BY reporting_date) AS leverage_change,
-       coverage,
-       coverage - LAG(coverage)    OVER (PARTITION BY fund_id ORDER BY reporting_date) AS coverage_change
-FROM valuations;
-""")
-con.commit()
-con.close()
+    # ---------- BATCH 2: schema B → map to canonical ----------
+    df2 = pd.read_csv(f"{RAW}/valuations_batch2.csv", dtype=object)
+    df2 = df2.rename(columns={
+        "FundID": "fund_id", "Period": "reporting_date", "NAV (EUR m)": "nav_eur_m",
+        "Gross Yield %": "yield_pct", "Leverage Multiple": "leverage",
+        "ICR": "coverage", "Defaults %": "default_rate_pct",
+    })
+    # Dedup BEFORE validation (log what we drop)
+    dupes = df2[df2.duplicated()]
+    for _, row in dupes.iterrows():
+        reject(row.to_dict(), "valuations_batch2.csv", "exact duplicate row — dropped")
+    df2 = df2.drop_duplicates()
+    clean2 = validate_and_collect(df2, "valuations_batch2.csv")
 
-# ---------- REJECTED ROWS LOG ----------
-if rejected:
-    pd.DataFrame(rejected).to_csv(LOG, index=False)
+    # ---------- LOAD TO SQLITE ----------
+    clean_df = pd.DataFrame(clean1 + clean2, columns=CANONICAL)
+    funds_df = pd.read_csv(f"{RAW}/funds.csv")
 
-print(f"✅ Ingestion complete")
-print(f"   Clean rows loaded : {len(clean_df)}")
-print(f"   Rejected rows     : {len(rejected)}  → {LOG}")
-print(f"   Database          : {DB} (tables: funds, valuations | views: v_latest, v_qoq)")
+    con = sqlite3.connect(DB)
+    funds_df.to_sql("funds", con, if_exists="replace", index=False)
+    clean_df.to_sql("valuations", con, if_exists="replace", index=False)
+
+    # Window-function views (the SQL showpiece)
+    con.executescript("""
+    DROP VIEW IF EXISTS v_latest;
+    CREATE VIEW v_latest AS
+    SELECT * FROM (
+        SELECT v.*,
+               ROW_NUMBER() OVER (PARTITION BY fund_id ORDER BY reporting_date DESC) AS rn
+        FROM valuations v
+    ) WHERE rn = 1;
+
+    DROP VIEW IF EXISTS v_qoq;
+    CREATE VIEW v_qoq AS
+    SELECT fund_id, reporting_date,
+           nav_eur_m,
+           nav_eur_m - LAG(nav_eur_m)  OVER (PARTITION BY fund_id ORDER BY reporting_date) AS nav_change,
+           leverage,
+           leverage - LAG(leverage)    OVER (PARTITION BY fund_id ORDER BY reporting_date) AS leverage_change,
+           coverage,
+           coverage - LAG(coverage)    OVER (PARTITION BY fund_id ORDER BY reporting_date) AS coverage_change
+    FROM valuations;
+    """)
+    con.commit()
+    con.close()
+
+    # ---------- REJECTED ROWS LOG ----------
+    if rejected:
+        pd.DataFrame(rejected).to_csv(LOG, index=False)
+
+    print(f"✅ Ingestion complete")
+    print(f"   Clean rows loaded : {len(clean_df)}")
+    print(f"   Rejected rows     : {len(rejected)}  → {LOG}")
+    print(f"   Database          : {DB} (tables: funds, valuations | views: v_latest, v_qoq)")
+
+
+if __name__ == "__main__":
+    main()

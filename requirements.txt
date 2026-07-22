@@ -3,3 +3,7 @@ plotly
 streamlit
 reportlab
 pdfplumber
+openpyxl
+sentence-transformers
+chromadb
+groq
