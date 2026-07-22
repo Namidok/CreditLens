@@ -9,6 +9,9 @@ import streamlit as st
 
 st.set_page_config(page_title="CreditLens", page_icon="🔍", layout="wide")
 
+# Known max-leverage covenants disclosed in GP reports
+COVENANTS = {"F003": 5.5}
+
 # ---------- LOAD ----------
 @st.cache_data
 def load():
@@ -38,7 +41,7 @@ with st.sidebar:
     up = st.file_uploader(
         "Test the pipeline with your own file",
         type=["csv", "xlsx", "pdf"],
-        help="CSV/Excel: runs through the validation gate. PDF: metric extraction."
+        help="CSV/Excel: runs through the validation gate. PDF: metric extraction + Q&A indexing."
     )
 
 f = df[df.strategy.isin(strat) & df.geography.isin(geo) & df.vintage_year.isin(vint)]
@@ -77,9 +80,6 @@ if up is not None:
         else:
             uploaded_clean, uploaded_rejected = validate_dataframe(
                 raw[CANONICAL], up.name)
-            st.sidebar.success(
-                f"✅ {len(uploaded_clean)} rows passed · "
-                f"🔴 {len(uploaded_rejected)} rejected")
 
     elif up.name.endswith(".pdf"):
         import pdfplumber
@@ -98,7 +98,21 @@ if up is not None:
             m = re.search(pat, text, flags=re.IGNORECASE)
             if m:
                 pdf_extract[label] = m.group(1) if m.groups() else m.group(0)
-        st.sidebar.success(f"✅ PDF parsed — {len(pdf_extract)} fields recognized")
+
+    # ---------- ROUTING RECEIPT ----------
+    with st.sidebar:
+        st.markdown("**📋 Processing receipt:**")
+        if uploaded_clean is not None:
+            st.markdown(
+                f"- ✅ **{len(uploaded_clean)}** rows validated → *Portfolio Dashboard*\n"
+                f"- 🔴 **{len(uploaded_rejected) if uploaded_rejected is not None else 0}** "
+                f"rows rejected → *Data Quality*"
+            )
+        if pdf_extract is not None:
+            st.markdown(
+                f"- 📊 **{len(pdf_extract)}** metrics extracted → *Portfolio Dashboard*\n"
+                f"- 🤖 indexed for Q&A → *Ask the Documents*"
+            )
 
 tab1, tab2, tab3 = st.tabs(["📊 Portfolio Dashboard", "🔍 Data Quality", "🤖 Ask the Documents"])
 
@@ -129,7 +143,7 @@ with tab1:
         st.json(pdf_extract)
         st.caption("⚠️ Pattern-extracted values — always validate against the source document.")
 
-    # ---------- WATCHLIST ----------
+    # ---------- WATCHLIST (severity-tiered) ----------
     st.subheader("⚠️ Watchlist")
     flagged = []
     for fid, g in f.sort_values("reporting_date").groupby("fund_id"):
@@ -138,15 +152,22 @@ with tab1:
             cov_d = g.coverage.diff().dropna().tail(2)
             if (lev_d > 0).all() and (cov_d < 0).all():
                 last = g.iloc[-1]
-                flagged.append(
-                    f"**{last.fund_name}** ({fid}) — leverage rising "
-                    f"({g.leverage.iloc[-3]:.1f}x → {last.leverage:.1f}x) while coverage falling "
-                    f"({g.coverage.iloc[-3]:.1f}x → {last.coverage:.1f}x). "
-                    f"Default rate: {last.default_rate_pct:.1f}%."
-                )
+                cov_limit = COVENANTS.get(fid)
+                near_breach = bool(cov_limit) and (cov_limit - last.leverage) <= 0.3
+                msg = (f"**{last.fund_name}** ({fid}) — leverage rising "
+                       f"({g.leverage.iloc[-3]:.1f}x → {last.leverage:.1f}x) while coverage falling "
+                       f"({g.coverage.iloc[-3]:.1f}x → {last.coverage:.1f}x). "
+                       f"Default rate: {last.default_rate_pct:.1f}%.")
+                if near_breach:
+                    msg += (f" ⚡ **{cov_limit - last.leverage:.1f}x from its "
+                            f"{cov_limit}x leverage covenant.**")
+                flagged.append((near_breach, msg))
     if flagged:
-        for msg in flagged:
-            st.error("🔴 " + msg)
+        for near_breach, msg in flagged:
+            if near_breach:
+                st.error("🔴 " + msg)
+            else:
+                st.warning("🟠 " + msg)
     else:
         st.success("No funds currently flagged.")
 
@@ -180,12 +201,17 @@ with tab1:
                       title=f"{sel}: Gross Yield (%)")
         st.plotly_chart(fig, use_container_width=True)
 
-    # ---------- FUND TABLE ----------
+    # ---------- FUND TABLE (with covenant headroom) ----------
     st.subheader("Fund-by-Fund (latest quarter)")
     tbl = latest[["fund_id", "fund_name", "strategy", "geography",
                   "nav_eur_m", "yield_pct", "leverage", "coverage",
-                  "default_rate_pct"]].sort_values("fund_id")
+                  "default_rate_pct"]].sort_values("fund_id").copy()
+    tbl["covenant_headroom"] = tbl.apply(
+        lambda r: f"{COVENANTS[r.fund_id] - r.leverage:.1f}x to {COVENANTS[r.fund_id]}x limit"
+        if COVENANTS.get(r.fund_id) else "—", axis=1)
     st.dataframe(tbl, use_container_width=True, hide_index=True)
+    st.caption("Covenant headroom shown where disclosed in GP reports — "
+               "F003 sits 0.1x from its 5.5x limit.")
 
 # ================= TAB 2: DATA QUALITY =================
 with tab2:
@@ -263,3 +289,9 @@ with tab3:
                     st.write(doc_text)
         st.caption("⚠️ AI-generated from retrieved passages — always validate figures "
                    "against the source document before using them in any decision.")
+
+# ---------- FOOTER ----------
+st.divider()
+st.caption("CreditLens — built by Srikar Kodi · [srikarkodi.dev](https://srikarkodi.dev) · "
+           "[GitHub](https://github.com/Namidok/CreditLens) · synthetic data · "
+           "prototype: SQLite + Streamlit; production path: Azure SQL + Power BI + Azure OpenAI")
