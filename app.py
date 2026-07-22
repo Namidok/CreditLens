@@ -5,9 +5,117 @@ import sqlite3
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
 
 st.set_page_config(page_title="CreditLens", page_icon="🔍", layout="wide")
+
+# ---------- CUSTOM STYLING ----------
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+/* App background: subtle gradient, not flat black */
+[data-testid="stAppViewContainer"] {
+    background: radial-gradient(ellipse at top left, #101728 0%, #0B0F17 55%);
+}
+
+/* Sidebar: slightly elevated panel */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0F1522 0%, #0B0F17 100%);
+    border-right: 1px solid #1E2635;
+}
+section[data-testid="stSidebar"] h2 {
+    font-size: 0.85rem; text-transform: uppercase;
+    letter-spacing: 0.1em; color: #7C8799;
+}
+
+/* Hero title */
+h1 {
+    font-weight: 800 !important; letter-spacing: -0.02em;
+    background: linear-gradient(90deg, #FFFFFF 20%, #00C2A8 85%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+
+/* KPI metric cards — the centerpiece */
+div[data-testid="stMetric"] {
+    background: linear-gradient(150deg, #151C2C 0%, #10151F 100%);
+    border: 1px solid #202A3D;
+    border-top: 2px solid #00C2A833;
+    border-radius: 14px;
+    padding: 18px 22px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    transition: transform .15s ease, border-color .15s ease;
+}
+div[data-testid="stMetric"]:hover {
+    transform: translateY(-2px);
+    border-color: #00C2A866;
+}
+div[data-testid="stMetric"] label {
+    color: #7C8799 !important; font-size: 0.72rem;
+    text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+}
+div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    font-family: 'JetBrains Mono', monospace;
+    color: #00C2A8 !important; font-weight: 700;
+}
+
+/* Tabs: pill-style */
+div[data-baseweb="tab-list"] {
+    gap: 6px; background: #10151F; padding: 6px;
+    border-radius: 12px; border: 1px solid #1E2635;
+}
+button[data-baseweb="tab"] {
+    border-radius: 8px !important; font-weight: 600; color: #7C8799;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    background: #1A2233 !important; color: #00C2A8 !important;
+}
+
+/* Text inputs: teal focus */
+.stTextInput input {
+    border-radius: 10px !important; border: 1px solid #202A3D !important;
+    background: #10151F !important;
+}
+.stTextInput input:focus { border-color: #00C2A8 !important; }
+
+/* Dataframes */
+div[data-testid="stDataFrame"] {
+    border: 1px solid #202A3D; border-radius: 12px; overflow: hidden;
+}
+
+/* Alerts: rounded, softer */
+div[data-testid="stAlert"] { border-radius: 12px; }
+
+/* Expanders (RAG evidence) */
+details {
+    border: 1px solid #202A3D !important; border-radius: 10px !important;
+    background: #10151F !important;
+}
+
+/* Divider */
+hr { border-color: #1E2635 !important; }
+
+/* Hide Streamlit chrome for product feel */
+#MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------- CHART THEME ----------
+pio.templates["creditlens"] = go.layout.Template(
+    layout=dict(
+        font=dict(family="Inter, sans-serif", color="#B8C2D0", size=13),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        colorway=["#00C2A8", "#5B8DEF", "#F0A35E", "#E66A7C", "#9B7CEF"],
+        xaxis=dict(gridcolor="#1B2333", zerolinecolor="#1B2333"),
+        yaxis=dict(gridcolor="#1B2333", zerolinecolor="#1B2333"),
+        title=dict(font=dict(size=15, color="#E6EAF0")),
+        legend=dict(bgcolor="rgba(0,0,0,0)"),
+        margin=dict(t=48, r=16, b=40, l=48),
+    ))
+pio.templates.default = "creditlens"
 
 # Known max-leverage covenants disclosed in GP reports
 COVENANTS = {"F003": 5.5}

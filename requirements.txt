@@ -7,3 +7,7 @@ openpyxl
 sentence-transformers
 chromadb
 groq
+torchvision
+fastapi
+uvicorn
+python-multipart
