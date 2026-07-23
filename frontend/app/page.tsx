@@ -5,7 +5,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 
-const API = "http://localhost:8000";
+const API = "";
 const TEAL = "#00C2A8";
 
 const card = "rounded-2xl border border-[#202A3D] bg-gradient-to-br from-[#151C2C] to-[#10151F] shadow-lg";
