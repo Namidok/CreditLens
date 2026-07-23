@@ -1,5 +1,9 @@
 source_file,reason,fund_id,reporting_date,nav_eur_m,yield_pct,leverage,coverage,default_rate_pct
 valuations_batch1.csv,missing/invalid value in 'coverage': nan,F002,31.12.2025,150.5,7.5,3.7,,0.5
 valuations_batch1.csv,"'yield_pct' value 0.118 outside sane range [1.0, 25.0] — possible unit error",F004,31.03.2026,58.9,0.118,4.1,2.9,0.0
+valuations_batch1.csv,missing/invalid value in 'coverage': nan,F002,31.12.2025,150.5,7.5,3.7,,0.5
+valuations_batch1.csv,"'yield_pct' value 0.118 outside sane range [1.0, 25.0] — possible unit error",F004,31.03.2026,58.9,0.118,4.1,2.9,0.0
+valuations_batch2.csv,exact duplicate row — dropped,F005,Q2 2026,122.7,7.6,4.3,2.5,0.1
+valuations_batch2.csv,missing/invalid value in 'leverage': nan,F007,Q4 2025,107.2,9.7,,3.2,0.9
 valuations_batch2.csv,exact duplicate row — dropped,F005,Q2 2026,122.7,7.6,4.3,2.5,0.1
 valuations_batch2.csv,missing/invalid value in 'leverage': nan,F007,Q4 2025,107.2,9.7,,3.2,0.9

@@ -27,7 +27,7 @@ app = FastAPI(title="CreditLens API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://creditlens.srikarkodi.dev", "http://creditlens.srikarkodi.dev"],
+    allow_origins=["http://localhost:3000", "https://creditlens.srikarkodi.dev"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -236,15 +236,15 @@ def commit(body: CommitPayload):
         onboarded = []
         if unknown and body.fund_meta:
             for fid in unknown:
-                meta = body.fund_meta.get(fid)
-                if meta and meta.get("fund_name"):
+                meta_row = body.fund_meta.get(fid)
+                if meta_row and meta_row.get("fund_name"):
                     pd.DataFrame([{
                         "fund_id": fid,
-                        "fund_name": meta.get("fund_name", fid),
-                        "strategy": meta.get("strategy") or "Unclassified",
-                        "geography": meta.get("geography") or "Unclassified",
-                        "vintage_year": int(meta["vintage_year"]) if meta.get("vintage_year") else None,
-                        "commitment_eur_m": float(meta["commitment_eur_m"]) if meta.get("commitment_eur_m") else None,
+                        "fund_name": meta_row.get("fund_name", fid),
+                        "strategy": meta_row.get("strategy") or "Unclassified",
+                        "geography": meta_row.get("geography") or "Unclassified",
+                        "vintage_year": int(meta_row["vintage_year"]) if meta_row.get("vintage_year") else None,
+                        "commitment_eur_m": float(meta_row["commitment_eur_m"]) if meta_row.get("commitment_eur_m") else None,
                     }]).to_sql("funds", con, if_exists="append", index=False)
                     onboarded.append(fid)
             unknown = sorted(set(unknown) - set(onboarded))
@@ -262,6 +262,18 @@ def commit(body: CommitPayload):
         return {"ok": True, "committed": len(df), "onboarded": onboarded}
     finally:
         con.close()
+
+
+# ---------- DEMO DATA ----------
+@app.post("/api/demo")
+def load_demo():
+    import subprocess
+    import sys
+    subprocess.run([sys.executable, "generate_data.py"], check=True)
+    from ingest import main as ingest_main
+    ingest_main()
+    STATE["rag_index"] = rag.build_index("raw_reports")
+    return {"ok": True}
 
 
 # ---------- RAG ----------
