@@ -25,9 +25,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CreditLens API", lifespan=lifespan)
 
+DEFAULT_ORIGINS = "http://localhost:3000,https://creditlens.srikarkodi.dev"
+CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://creditlens.srikarkodi.dev"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -188,15 +191,18 @@ async def upload(file: UploadFile = File(...)):
                 "rejected_rows": rej.fillna("").to_dict(orient="records")}
 
     if name.endswith(".pdf"):
-        with pdfplumber.open(io.BytesIO(content)) as pdf:
-            text = "\n\n".join((p.extract_text() or "") for p in pdf.pages)
+        try:
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                text = "\n\n".join((p.extract_text() or "") for p in pdf.pages)
+        except Exception as e:
+            return {"error": f"Could not read PDF: {e}", "filename": name}
         flat = " ".join(text.split())
         patterns = {
-            "nav_eur_m": r"(?:NAV|net asset value)[^\d]{0,40}([\d.,]+)",
-            "yield_pct": r"(?:yield)[^\d]{0,40}([\d.,]+)\s*%",
-            "leverage": r"(?:leverage|net debt)[^\d]{0,40}([\d.,]+)\s*x",
-            "coverage": r"(?:coverage|ICR)[^\d]{0,40}([\d.,]+)\s*x",
-            "default_rate_pct": r"(?:default)[^\d]{0,40}([\d.,]+)\s*%",
+            "nav_eur_m": r"(?:NAV|net asset value)[^\d]{0,40}(\d[\d.,]*)",
+            "yield_pct": r"(?:yield)[^\d]{0,40}(\d[\d.,]*)\s*%",
+            "leverage": r"(?:leverage|net debt)[^\d]{0,40}(\d[\d.,]*)\s*x",
+            "coverage": r"(?:coverage|ICR)[^\d]{0,40}(\d[\d.,]*)\s*x",
+            "default_rate_pct": r"(?:default)[^\d]{0,40}(\d[\d.,]*)\s*%",
             "covenant": r"covenant.{0,250}",
         }
         extract = {}

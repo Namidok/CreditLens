@@ -8,9 +8,12 @@ import os
 import re
 import pdfplumber
 
+_DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
+
 _CHUNK_MIN = 200
 _CHUNK_MAX = 900
 _COLLECTION = "gp_reports"
+_MAX_DISTANCE = 0.5  # cosine distance cutoff (0 = identical, 2 = opposite) — drops weak/irrelevant matches
 
 
 # ---------- CHUNKING ----------
@@ -51,7 +54,10 @@ def build_index(pdf_dir="raw_reports"):
         client.delete_collection(_COLLECTION)
     except Exception:
         pass
-    col = client.create_collection(_COLLECTION, embedding_function=embed_fn)
+    col = client.create_collection(
+        _COLLECTION, embedding_function=embed_fn,
+        metadata={"hnsw:space": "cosine"},  # bounded [0, 2] distance so a fixed cutoff is meaningful
+    )
 
     docs, ids, metas = [], [], []
     for fname in sorted(os.listdir(pdf_dir)):
@@ -98,7 +104,7 @@ def _call_llm(question, context_blocks, api_key):
     )
     client = Groq(api_key=api_key)
     resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=os.environ.get("GROQ_MODEL", _DEFAULT_GROQ_MODEL),
         max_tokens=500,
         temperature=0.1,
         messages=[{"role": "user", "content": prompt}],
@@ -109,8 +115,10 @@ def _call_llm(question, context_blocks, api_key):
 def answer(col, question, api_key=None, k=4):
     """Retrieve top-k chunks; LLM-synthesize if key available, else extractive.
     Returns (answer_text, sources) where sources = [(text, metadata), ...]."""
-    res = col.query(query_texts=[question], n_results=k)
-    blocks = list(zip(res["documents"][0], res["metadatas"][0]))
+    res = col.query(query_texts=[question], n_results=k,
+                     include=["documents", "metadatas", "distances"])
+    all_blocks = list(zip(res["documents"][0], res["metadatas"][0], res["distances"][0]))
+    blocks = [(d, m) for d, m, dist in all_blocks if dist <= _MAX_DISTANCE]
     if not blocks:
         return "No relevant passages found in the indexed documents.", []
     if api_key:

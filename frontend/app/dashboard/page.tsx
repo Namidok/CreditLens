@@ -6,7 +6,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 
-const API = "";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "";
 const ACCENT = "#0E5A4A";
 const RED = "#B4232A";
 const AMBER = "#9A6700";

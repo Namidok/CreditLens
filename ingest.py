@@ -64,6 +64,10 @@ def parse_date(val):
 def validate_and_collect(df, source):
     """Run every row through the validation gate. Returns list of clean rows."""
     clean = []
+    dup_mask = df.duplicated()
+    for _, row in df[dup_mask].iterrows():
+        reject(row.to_dict(), source, "exact duplicate row — dropped")
+    df = df[~dup_mask]
     for _, row in df.iterrows():
         raw = row.to_dict()
         d = parse_date(raw["reporting_date"])
@@ -118,12 +122,7 @@ def main():
         "Gross Yield %": "yield_pct", "Leverage Multiple": "leverage",
         "ICR": "coverage", "Defaults %": "default_rate_pct",
     })
-    # Dedup BEFORE validation (log what we drop)
-    dupes = df2[df2.duplicated()]
-    for _, row in dupes.iterrows():
-        reject(row.to_dict(), "valuations_batch2.csv", "exact duplicate row — dropped")
-    df2 = df2.drop_duplicates()
-    clean2 = validate_and_collect(df2, "valuations_batch2.csv")
+    clean2 = validate_and_collect(df2, "valuations_batch2.csv")  # dedup happens inside
 
     # ---------- LOAD TO SQLITE ----------
     clean_df = pd.DataFrame(clean1 + clean2, columns=CANONICAL)
