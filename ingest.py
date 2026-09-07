@@ -24,11 +24,9 @@ RANGES = {
     "default_rate_pct": (0.0, 20.0),
 }
 
-rejected = []
-
-
 def reject(row_dict, source, reason):
-    rejected.append({"source_file": source, "reason": reason, **row_dict})
+    """Build a rejection record. Pure — the caller owns the list."""
+    return {"source_file": source, "reason": reason, **row_dict}
 
 
 def to_float(val):
@@ -62,17 +60,19 @@ def parse_date(val):
 
 
 def validate_and_collect(df, source):
-    """Run every row through the validation gate. Returns list of clean rows."""
-    clean = []
+    """Run every row through the validation gate.
+    Returns (clean_rows, rejected_records). Holds no state between calls."""
+    clean, rejected = [], []
     dup_mask = df.duplicated()
     for _, row in df[dup_mask].iterrows():
-        reject(row.to_dict(), source, "exact duplicate row — dropped")
+        rejected.append(reject(row.to_dict(), source, "exact duplicate row — dropped"))
     df = df[~dup_mask]
     for _, row in df.iterrows():
         raw = row.to_dict()
         d = parse_date(raw["reporting_date"])
         if d is None:
-            reject(raw, source, f"unparseable date: {raw['reporting_date']!r}")
+            rejected.append(
+                reject(raw, source, f"unparseable date: {raw['reporting_date']!r}"))
             continue
         vals, bad = {}, None
         for col in ["nav_eur_m", "yield_pct", "leverage", "coverage", "default_rate_pct"]:
@@ -87,33 +87,28 @@ def validate_and_collect(df, source):
                 break
             vals[col] = v
         if bad:
-            reject(raw, source, bad)
+            rejected.append(reject(raw, source, bad))
             continue
         clean.append([raw["fund_id"], d, vals["nav_eur_m"], vals["yield_pct"],
                       vals["leverage"], vals["coverage"], vals["default_rate_pct"]])
-    return clean
+    return clean, rejected
 
 
 def validate_dataframe(df, source_name):
     """Reusable validation entry point for uploaded files.
     Returns (clean_df, rejected_df)."""
-    global rejected
-    rejected = []
-    clean = validate_and_collect(df, source_name)
+    clean, rejected = validate_and_collect(df, source_name)
     clean_df = pd.DataFrame(clean, columns=CANONICAL)
     rejected_df = pd.DataFrame(rejected) if rejected else pd.DataFrame()
     return clean_df, rejected_df
 
 
 def main():
-    global rejected
-    rejected = []
-
     # ---------- BATCH 1: schema A ----------
     df1 = pd.read_csv(f"{RAW}/valuations_batch1.csv", dtype=object)
     df1 = df1.rename(columns={"net_debt_ebitda": "leverage",
                               "interest_coverage": "coverage"})
-    clean1 = validate_and_collect(df1, "valuations_batch1.csv")
+    clean1, rejected1 = validate_and_collect(df1, "valuations_batch1.csv")
 
     # ---------- BATCH 2: schema B → map to canonical ----------
     df2 = pd.read_csv(f"{RAW}/valuations_batch2.csv", dtype=object)
@@ -122,9 +117,10 @@ def main():
         "Gross Yield %": "yield_pct", "Leverage Multiple": "leverage",
         "ICR": "coverage", "Defaults %": "default_rate_pct",
     })
-    clean2 = validate_and_collect(df2, "valuations_batch2.csv")  # dedup happens inside
+    clean2, rejected2 = validate_and_collect(df2, "valuations_batch2.csv")  # dedup inside
 
     # ---------- LOAD TO SQLITE ----------
+    rejected = rejected1 + rejected2
     clean_df = pd.DataFrame(clean1 + clean2, columns=CANONICAL)
     funds_df = pd.read_csv(f"{RAW}/funds.csv")
 
